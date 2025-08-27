@@ -8,7 +8,7 @@
     "dev": "nodemon server.js",
     "setup": "node scripts/setup-database.js",
     "import": "node scripts/import-data.js",
-    "build": "echo 'Build complete'",
+    "build": "echo 'Build complete - static files ready'",
     "test": "echo 'No tests specified'",
     "postinstall": "echo 'Installation complete'"
   },
@@ -23,9 +23,12 @@
     "geospatial",
     "austria",
     "environmental",
-    "gis"
+    "gis",
+    "leaflet",
+    "postgresql",
+    "postgis"
   ],
-  "author": "Your Name",
+  "author": "CO2 Storage Atlas Team",
   "license": "MIT",
   "dependencies": {
     "express": "^4.18.2",
@@ -38,7 +41,12 @@
     "express-rate-limit": "^6.10.0",
     "pg": "^8.11.3",
     "express-validator": "^7.0.1",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "csv-parser": "^3.0.0",
+    "xlsx": "^0.18.5",
+    "shapefile": "^0.6.6",
+    "proj4": "^2.9.0",
+    "@turf/turf": "^6.5.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
@@ -46,5 +54,9 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/kptoo/CO-Storage-Atlas-application.git"
-  }
+  },
+  "bugs": {
+    "url": "https://github.com/kptoo/CO-Storage-Atlas-application/issues"
+  },
+  "homepage": "https://github.com/kptoo/CO-Storage-Atlas-application#readme"
 }
