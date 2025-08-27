@@ -3,34 +3,57 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="CO₂ Storage Atlas for Upper Austria & Salzburg - Interactive geospatial mapping of CO₂ emission sources and storage suitability">
+    <meta name="keywords" content="CO2, carbon storage, Austria, Salzburg, environmental, geospatial, GIS, climate">
+    <meta name="author" content="CO₂ Storage Atlas Team">
     <title>CO₂ Storage Atlas - Upper Austria & Salzburg</title>
+    
+    <!-- Preload critical resources -->
+    <link rel="preload" href="css/styles.css" as="style">
+    <link rel="preload" href="js/app.js" as="script">
     
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" 
           integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" 
-          crossorigin=""/>
+          crossorigin=""
+          media="all">
     
     <!-- Leaflet MarkerCluster CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.css" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.css"
+          media="all">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css"
+          media="all">
     
     <!-- Custom CSS -->
-    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/styles.css" media="all">
     
-    <!-- Favicon -->
+    <!-- Favicon and icons -->
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌍</text></svg>">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌍</text></svg>">
+    
+    <!-- Open Graph meta tags -->
+    <meta property="og:title" content="CO₂ Storage Atlas - Upper Austria & Salzburg">
+    <meta property="og:description" content="Interactive geospatial mapping of CO₂ emission sources and storage suitability">
+    <meta property="og:type" content="website">
+    <meta property="og:image" content="/icons/CO₂ Sources.png">
+    
+    <!-- Twitter Card meta tags -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="CO₂ Storage Atlas">
+    <meta name="twitter:description" content="Interactive CO₂ emission mapping for Austria">
 </head>
 <body>
-    <!-- Title Bar Removed - Clean Interface -->
-
     <!-- Map Container - Full Screen -->
-    <div id="map"></div>
+    <div id="map" role="main" aria-label="Interactive CO₂ Storage Atlas Map"></div>
 
-    <!-- Enhanced Control Panel with Smart Vertical/Horizontal Collapse -->
-    <div class="control-panel" id="control-panel">
+    <!-- Enhanced Control Panel -->
+    <div class="control-panel" id="control-panel" role="complementary" aria-label="Map Controls">
         <div class="panel-header">
-            <h3>Map Layers</h3>
-            <button class="panel-toggle" id="panel-toggle" title="Toggle Panel">
+            <h1>Map Layers</h1>
+            <button class="panel-toggle" id="panel-toggle" 
+                    title="Toggle Panel" 
+                    aria-label="Toggle control panel"
+                    aria-expanded="true">
                 <span class="toggle-icon">−</span>
             </button>
         </div>
@@ -38,198 +61,216 @@
         <!-- Scrollable Content Area -->
         <div class="panel-content">
             <!-- Data Quality Indicator -->
-            <div class="data-quality" id="data-quality">
-                <h4>Data Status</h4>
+            <section class="data-quality" id="data-quality" aria-labelledby="data-status-heading">
+                <h2 id="data-status-heading">Data Status</h2>
                 <div class="quality-item">
                     <span class="quality-label">Database:</span>
-                    <span class="quality-status" id="db-status">Checking...</span>
+                    <span class="quality-status" id="db-status" aria-live="polite">Checking...</span>
                 </div>
                 <div class="quality-item">
                     <span class="quality-label">Layers:</span>
-                    <span class="quality-status" id="layers-status">0/14 loaded</span>
+                    <span class="quality-status" id="layers-status" aria-live="polite">0/14 loaded</span>
                 </div>
-            </div>
+            </section>
             
             <!-- Primary Layers -->
-            <div class="layer-controls">
-                <h4>Primary Data</h4>
+            <section class="layer-controls" aria-labelledby="primary-data-heading">
+                <h2 id="primary-data-heading">Primary Data</h2>
                 
                 <div class="layer-control">
-                    <input type="checkbox" id="layer-voting" checked>
-                    <label for="layer-voting" title="Political preference choropleth map with reduced opacity">
+                    <input type="checkbox" id="layer-voting" checked 
+                           aria-describedby="voting-desc">
+                    <label for="layer-voting">
                         <span class="layer-name">Left+Green Voting Share</span>
                         <span class="layer-count" id="voting-count">(0)</span>
                     </label>
                     <div class="layer-legend gradient-legend voting-legend" 
-                         title="Gray: No data, Orange to Green: Low to High left+green support"></div>
+                         id="voting-desc"
+                         title="Gray: No data, Orange to Green: Low to High left+green support"
+                         aria-label="Voting preference color scale"></div>
                 </div>
                 
                 <div class="layer-control">
-                    <input type="checkbox" id="layer-co2-sources" checked>
-                    <label for="layer-co2-sources" title="Industrial CO₂ emission sources with clustering">
+                    <input type="checkbox" id="layer-co2-sources" checked
+                           aria-describedby="co2-desc">
+                    <label for="layer-co2-sources">
                         <span class="layer-name">CO₂ Emission Sources</span>
                         <span class="layer-count" id="co2-count">(0)</span>
                     </label>
-                    <div class="layer-legend layer-icon" title="Custom PNG icons with clustering">
-                        <img src="/icons/CO₂ Sources.png" alt="CO₂ Sources" class="legend-icon">
+                    <div class="layer-legend layer-icon" id="co2-desc" 
+                         title="Industrial CO₂ emission sources with clustering"
+                         aria-label="CO₂ sources icon">
+                        <img src="icons/CO₂ Sources.png" alt="CO₂ Sources" class="legend-icon" loading="lazy">
                     </div>
                 </div>
-            </div>
+            </section>
 
             <!-- Infrastructure Layers -->
-            <div class="layer-controls">
-                <h4>Infrastructure</h4>
+            <section class="layer-controls" aria-labelledby="infrastructure-heading">
+                <h2 id="infrastructure-heading">Infrastructure</h2>
                 
                 <div class="layer-control">
                     <input type="checkbox" id="layer-landfills">
-                    <label for="layer-landfills" title="Waste disposal facilities">
+                    <label for="layer-landfills">
                         <span class="layer-name">Landfills</span>
                         <span class="layer-count" id="landfills-count">(0)</span>
                     </label>
                     <div class="layer-legend layer-icon">
-                        <img src="/icons/Landfills.png" alt="Landfills" class="legend-icon">
+                        <img src="icons/Landfills.png" alt="Landfills" class="legend-icon" loading="lazy">
                     </div>
                 </div>
                 
                 <div class="layer-control">
                     <input type="checkbox" id="layer-gravel-pits">
-                    <label for="layer-gravel-pits" title="Extraction sites and quarries">
+                    <label for="layer-gravel-pits">
                         <span class="layer-name">Gravel Pits & Quarries</span>
                         <span class="layer-count" id="gravel-count">(0)</span>
                     </label>
                     <div class="layer-legend layer-icon">
-                        <img src="/icons/Gravel Pits.png" alt="Gravel Pits" class="legend-icon">
+                        <img src="icons/Gravel Pits.png" alt="Gravel Pits" class="legend-icon" loading="lazy">
                     </div>
                 </div>
                 
                 <div class="layer-control">
                     <input type="checkbox" id="layer-wastewater">
-                    <label for="layer-wastewater" title="Water treatment facilities">
+                    <label for="layer-wastewater">
                         <span class="layer-name">Wastewater Plants</span>
                         <span class="layer-count" id="wastewater-count">(0)</span>
                     </label>
                     <div class="layer-legend layer-icon">
-                        <img src="/icons/Wastewater Plants.png" alt="Wastewater Plants" class="legend-icon">
+                        <img src="icons/Wastewater Plants.png" alt="Wastewater Plants" class="legend-icon" loading="lazy">
                     </div>
                 </div>
                 
                 <div class="layer-control">
                     <input type="checkbox" id="layer-gas-pipelines">
-                    <label for="layer-gas-pipelines" title="Natural gas transmission network">
+                    <label for="layer-gas-pipelines">
                         <span class="layer-name">Gas Pipeline Network</span>
                         <span class="layer-count" id="pipelines-count">(0)</span>
                     </label>
                     <div class="layer-legend line-legend" 
-                         style="background: #00aa44; height: 4px; border-radius: 2px;"></div>
+                         style="background: #00aa44; height: 4px; border-radius: 2px;" 
+                         aria-label="Gas pipeline line style"></div>
                 </div>
                 
                 <div class="layer-control">
                     <input type="checkbox" id="layer-gas-storage">
-                    <label for="layer-gas-storage" title="Underground gas storage facilities">
+                    <label for="layer-gas-storage">
                         <span class="layer-name">Gas Storage Sites</span>
                         <span class="layer-count" id="storage-count">(0)</span>
                     </label>
                     <div class="layer-legend layer-icon">
-                        <img src="/icons/Gas Storage.png" alt="Gas Storage" class="legend-icon">
+                        <img src="icons/Gas Storage.png" alt="Gas Storage" class="legend-icon" loading="lazy">
                     </div>
                 </div>
                 
                 <div class="layer-control">
                     <input type="checkbox" id="layer-gas-distribution">
-                    <label for="layer-gas-distribution" title="Local gas distribution points">
+                    <label for="layer-gas-distribution">
                         <span class="layer-name">Gas Distribution Points</span>
                         <span class="layer-count" id="distribution-count">(0)</span>
                     </label>
                     <div class="layer-legend layer-icon">
-                        <img src="/icons/Gas Distribution.png" alt="Gas Distribution" class="legend-icon">
+                        <img src="icons/Gas Distribution.png" alt="Gas Distribution" class="legend-icon" loading="lazy">
                     </div>
                 </div>
                 
                 <div class="layer-control">
                     <input type="checkbox" id="layer-compressor-stations">
-                    <label for="layer-compressor-stations" title="Gas compression facilities">
+                    <label for="layer-compressor-stations">
                         <span class="layer-name">Compressor Stations</span>
                         <span class="layer-count" id="compressor-count">(0)</span>
                     </label>
                     <div class="layer-legend layer-icon">
-                        <img src="/icons/Compressor Stations.png" alt="Compressor Stations" class="legend-icon">
+                        <img src="icons/Compressor Stations.png" alt="Compressor Stations" class="legend-icon" loading="lazy">
                     </div>
                 </div>
-            </div>
+            </section>
 
             <!-- Transport Infrastructure -->
-            <div class="layer-controls">
-                <h4>Transport Network</h4>
+            <section class="layer-controls" aria-labelledby="transport-heading">
+                <h2 id="transport-heading">Transport Network</h2>
                 
                 <div class="layer-control">
                     <input type="checkbox" id="layer-highways">
-                    <label for="layer-highways" title="Major road network">
+                    <label for="layer-highways">
                         <span class="layer-name">Primary Roads</span>
                         <span class="layer-count" id="highways-count">(0)</span>
                     </label>
                     <div class="layer-legend line-legend" 
-                         style="background: #666666; height: 3px; border-radius: 2px;"></div>
+                         style="background: #666666; height: 3px; border-radius: 2px;"
+                         aria-label="Highway line style"></div>
                 </div>
                 
                 <div class="layer-control">
                     <input type="checkbox" id="layer-railways">
-                    <label for="layer-railways" title="Railway network">
+                    <label for="layer-railways">
                         <span class="layer-name">Railway Lines</span>
                         <span class="layer-count" id="railways-count">(0)</span>
                     </label>
                     <div class="layer-legend line-legend dashed" 
-                         style="background: #8B4513; height: 3px; border-radius: 2px;"></div>
+                         style="background: #8B4513; height: 3px; border-radius: 2px;"
+                         aria-label="Railway dashed line style"></div>
                 </div>
-            </div>
+            </section>
 
             <!-- Unsuitable Areas -->
-            <div class="layer-controls">
-                <h4>Unsuitable Areas for CO₂ Storage</h4>
+            <section class="layer-controls" aria-labelledby="unsuitable-heading">
+                <h2 id="unsuitable-heading">Unsuitable Areas for CO₂ Storage</h2>
                 
                 <div class="layer-control">
                     <input type="checkbox" id="layer-settlements">
-                    <label for="layer-settlements" title="Populated residential areas">
+                    <label for="layer-settlements">
                         <span class="layer-name">Residential Areas</span>
                         <span class="layer-count" id="settlements-count">(0)</span>
                     </label>
                     <div class="layer-legend area-legend" 
-                         style="background: rgba(255, 0, 0, 0.3); border: 2px solid #cc0000;"></div>
+                         style="background: rgba(255, 0, 0, 0.3); border: 2px solid #cc0000;"
+                         aria-label="Residential area style"></div>
                 </div>
                 
                 <div class="layer-control">
                     <input type="checkbox" id="layer-conservation">
-                    <label for="layer-conservation" title="Protected natural areas">
+                    <label for="layer-conservation">
                         <span class="layer-name">Nature Conservation</span>
                         <span class="layer-count" id="conservation-count">(0)</span>
                     </label>
                     <div class="layer-legend area-legend" 
-                         style="background: rgba(0, 255, 0, 0.3); border: 2px solid #00cc00;"></div>
+                         style="background: rgba(0, 255, 0, 0.3); border: 2px solid #00cc00;"
+                         aria-label="Conservation area style"></div>
                 </div>
                 
                 <div class="layer-control">
                     <input type="checkbox" id="layer-groundwater">
-                    <label for="layer-groundwater" title="Groundwater protection zones">
+                    <label for="layer-groundwater">
                         <span class="layer-name">Groundwater Protection</span>
                         <span class="layer-count" id="groundwater-count">(0)</span>
                     </label>
                     <div class="layer-legend area-legend" 
-                         style="background: rgba(0, 102, 255, 0.3); border: 2px solid #0044cc;"></div>
+                         style="background: rgba(0, 102, 255, 0.3); border: 2px solid #0044cc;"
+                         aria-label="Groundwater protection area style"></div>
                 </div>
-            </div>
+            </section>
 
             <!-- Layer Management Tools -->
-            <div class="layer-management">
-                <h4>Layer Tools</h4>
-                <div class="tool-buttons">
-                    <button class="btn btn-small" id="show-all-layers" title="Enable all layers">Show All</button>
-                    <button class="btn btn-small" id="hide-all-layers" title="Disable all layers">Hide All</button>
-                    <button class="btn btn-small" id="refresh-data" title="Reload data from server">Refresh</button>
+            <section class="layer-management" aria-labelledby="layer-tools-heading">
+                <h2 id="layer-tools-heading">Layer Tools</h2>
+                <div class="tool-buttons" role="group" aria-labelledby="layer-tools-heading">
+                    <button class="btn btn-small" id="show-all-layers" 
+                            title="Enable all layers"
+                            aria-label="Show all map layers">Show All</button>
+                    <button class="btn btn-small" id="hide-all-layers" 
+                            title="Disable all layers"
+                            aria-label="Hide all map layers">Hide All</button>
+                    <button class="btn btn-small" id="refresh-data" 
+                            title="Reload data from server"
+                            aria-label="Refresh map data">Refresh</button>
                 </div>
-            </div>
+            </section>
 
             <!-- Performance Settings -->
-            <div class="performance-settings">
-                <h4>Performance</h4>
+            <section class="performance-settings" aria-labelledby="performance-heading">
+                <h2 id="performance-heading">Performance</h2>
                 <div class="performance-controls">
                     <label class="toggle-switch">
                         <input type="checkbox" id="clustering-enabled" checked>
@@ -240,112 +281,136 @@
                         <span class="slider">Performance Mode</span>
                     </label>
                 </div>
-            </div>
+            </section>
 
             <!-- Base Map Control -->
-            <div class="basemap-section">
-                <h4>Base Map</h4>
+            <section class="basemap-section" aria-labelledby="basemap-heading">
+                <h2 id="basemap-heading">Base Map</h2>
                 <div class="basemap-controls">
-                    <select id="basemap-selector">
+                    <select id="basemap-selector" aria-label="Select base map">
                         <option value="osm">OpenStreetMap</option>
                         <option value="satellite">Satellite Imagery</option>
                         <option value="terrain">Terrain Map</option>
                     </select>
                 </div>
-            </div>
+            </section>
 
             <!-- Statistics Panel -->
-            <div class="statistics-panel" id="statistics-panel">
-                <h4>Map Statistics</h4>
+            <section class="statistics-panel" id="statistics-panel" aria-labelledby="statistics-heading">
+                <h2 id="statistics-heading">Map Statistics</h2>
                 <div class="stat-item">
                     <span class="stat-label">Total Features:</span>
-                    <span class="stat-value" id="total-features">0</span>
+                    <span class="stat-value" id="total-features" aria-live="polite">0</span>
                 </div>
                 <div class="stat-item">
                     <span class="stat-label">Visible Layers:</span>
-                    <span class="stat-value" id="visible-layers">0</span>
+                    <span class="stat-value" id="visible-layers" aria-live="polite">0</span>
                 </div>
                 <div class="stat-item">
                     <span class="stat-label">Map Zoom:</span>
-                    <span class="stat-value" id="current-zoom">8</span>
+                    <span class="stat-value" id="current-zoom" aria-live="polite">8</span>
                 </div>
                 <div class="stat-item">
                     <span class="stat-label">Clusters Active:</span>
-                    <span class="stat-value" id="active-clusters">4</span>
+                    <span class="stat-value" id="active-clusters" aria-live="polite">4</span>
                 </div>
-            </div>
+            </section>
 
             <!-- Authentication Section -->
-            <div class="auth-section">
-                <h4>Admin Access</h4>
+            <section class="auth-section" aria-labelledby="admin-heading">
+                <h2 id="admin-heading">Admin Access</h2>
                 <div class="auth-form" id="auth-form">
-                    <input type="password" id="admin-password" placeholder="Enter admin password">
-                    <button class="btn btn-primary" id="admin-login-btn">Login</button>
+                    <input type="password" id="admin-password" 
+                           placeholder="Enter admin password"
+                           aria-label="Admin password">
+                    <button class="btn btn-primary" id="admin-login-btn"
+                            aria-label="Login as administrator">Login</button>
                 </div>
                 <div class="auth-status" id="auth-status" style="display: none;">
-                    <span class="auth-indicator"></span>
+                    <span class="auth-indicator" aria-hidden="true"></span>
                     <span class="auth-text">Admin Mode</span>
-                    <button class="btn btn-small" id="admin-logout-btn">Logout</button>
+                    <button class="btn btn-small" id="admin-logout-btn"
+                            aria-label="Logout from admin mode">Logout</button>
                 </div>
-            </div>
+            </section>
         </div>
     </div>
 
     <!-- Admin Panel (Hidden by default) -->
-    <div id="admin-panel" class="admin-panel">
+    <div id="admin-panel" class="admin-panel" role="dialog" aria-hidden="true" aria-labelledby="admin-panel-heading">
         <div class="admin-header">
-            <h3>Admin Panel</h3>
-            <button class="btn btn-small" id="close-admin-panel">×</button>
+            <h2 id="admin-panel-heading">Admin Panel</h2>
+            <button class="btn btn-small" id="close-admin-panel" 
+                    aria-label="Close admin panel">×</button>
         </div>
         
-        <div class="admin-tabs">
-            <div class="admin-tab active" data-tab="co2">CO₂ Sources</div>
-            <div class="admin-tab" data-tab="layers">Layer Management</div>
-            <div class="admin-tab" data-tab="database">Database</div>
+        <div class="admin-tabs" role="tablist">
+            <div class="admin-tab active" data-tab="co2" role="tab" 
+                 aria-selected="true" tabindex="0">CO₂ Sources</div>
+            <div class="admin-tab" data-tab="layers" role="tab" 
+                 aria-selected="false" tabindex="-1">Layer Management</div>
+            <div class="admin-tab" data-tab="database" role="tab" 
+                 aria-selected="false" tabindex="-1">Database</div>
         </div>
 
         <!-- CO2 Sources Form -->
-        <div id="admin-form-co2" class="admin-form active">
-            <h4>Add/Edit CO₂ Source</h4>
-            <input type="hidden" id="co2-id">
-            <input type="text" id="co2-plant-name" placeholder="Plant Name" required>
-            <select id="co2-plant-type" required>
-                <option value="">Select Type</option>
-                <option value="Waste-to-energy plant">Waste-to-energy plant</option>
-                <option value="Biomethane plant">Biomethane plant</option>
-                <option value="Paper mill">Paper mill</option>
-                <option value="Cement plant">Cement plant</option>
-                <option value="Chemical plant">Chemical plant</option>
-                <option value="Steel mill">Steel mill</option>
-                <option value="Power plant">Power plant</option>
-                <option value="Industrial facility">Industrial facility</option>
-            </select>
-            <input type="number" id="co2-total" placeholder="Total CO₂ (t/year)" min="0" step="100">
-            <input type="number" id="co2-fossil" placeholder="Fossil CO₂ (t/year)" min="0" step="100">
-            <input type="number" id="co2-biogenic" placeholder="Biogenic CO₂ (t/year)" min="0" step="100">
-            <input type="number" id="co2-latitude" placeholder="Latitude (WGS84)" step="0.000001" min="46" max="49" required>
-            <input type="number" id="co2-longitude" placeholder="Longitude (WGS84)" step="0.000001" min="9" max="17" required>
-            <textarea id="co2-comment" placeholder="Comment or description" rows="3"></textarea>
-            <div class="coordinate-tools">
-                <button type="button" class="btn btn-small" id="get-coordinates">Click Map for Coordinates</button>
-                <button type="button" class="btn btn-small" id="validate-coordinates">Validate</button>
-            </div>
-            <div class="existing-sources">
-                <h5>Existing Sources (Click to Edit)</h5>
-                <div class="sources-list" id="sources-list">
-                    <p>Loading existing sources...</p>
+        <div id="admin-form-co2" class="admin-form active" role="tabpanel">
+            <h3>Add/Edit CO₂ Source</h3>
+            <form id="co2-form" novalidate>
+                <input type="hidden" id="co2-id">
+                <input type="text" id="co2-plant-name" placeholder="Plant Name" required 
+                       aria-label="Plant name">
+                <select id="co2-plant-type" required aria-label="Plant type">
+                    <option value="">Select Type</option>
+                    <option value="Waste-to-energy plant">Waste-to-energy plant</option>
+                    <option value="Biomethane plant">Biomethane plant</option>
+                    <option value="Paper mill">Paper mill</option>
+                    <option value="Cement plant">Cement plant</option>
+                    <option value="Chemical plant">Chemical plant</option>
+                    <option value="Steel mill">Steel mill</option>
+                    <option value="Power plant">Power plant</option>
+                    <option value="Industrial facility">Industrial facility</option>
+                </select>
+                <input type="number" id="co2-total" placeholder="Total CO₂ (t/year)" 
+                       min="0" step="100" aria-label="Total CO₂ emissions per year">
+                <input type="number" id="co2-fossil" placeholder="Fossil CO₂ (t/year)" 
+                       min="0" step="100" aria-label="Fossil CO₂ emissions per year">
+                <input type="number" id="co2-biogenic" placeholder="Biogenic CO₂ (t/year)" 
+                       min="0" step="100" aria-label="Biogenic CO₂ emissions per year">
+                <input type="number" id="co2-latitude" placeholder="Latitude (WGS84)" 
+                       step="0.000001" min="46" max="49" required aria-label="Latitude coordinate">
+                <input type="number" id="co2-longitude" placeholder="Longitude (WGS84)" 
+                       step="0.000001" min="9" max="17" required aria-label="Longitude coordinate">
+                <textarea id="co2-comment" placeholder="Comment or description" 
+                          rows="3" aria-label="Additional comments"></textarea>
+                
+                <div class="coordinate-tools">
+                    <button type="button" class="btn btn-small" id="get-coordinates">
+                        Click Map for Coordinates
+                    </button>
+                    <button type="button" class="btn btn-small" id="validate-coordinates">
+                        Validate
+                    </button>
                 </div>
-            </div>
-            <div class="btn-group">
-                <button class="btn btn-primary" id="save-co2">Save</button>
-                <button class="btn btn-secondary" id="clear-co2">Clear</button>
-                <button class="btn btn-danger" id="delete-co2" style="display: none;">Delete</button>
-            </div>
+                
+                <div class="existing-sources">
+                    <h4>Existing Sources (Click to Edit)</h4>
+                    <div class="sources-list" id="sources-list">
+                        <p>Loading existing sources...</p>
+                    </div>
+                </div>
+                
+                <div class="btn-group">
+                    <button type="button" class="btn btn-primary" id="save-co2">Save</button>
+                    <button type="button" class="btn btn-secondary" id="clear-co2">Clear</button>
+                    <button type="button" class="btn btn-danger" id="delete-co2" style="display: none;">Delete</button>
+                </div>
+            </form>
         </div>
 
         <!-- Layer Management Form -->
-        <div id="admin-form-layers" class="admin-form">
-            <h4>Layer Management</h4>
+        <div id="admin-form-layers" class="admin-form" role="tabpanel">
+            <h3>Layer Management</h3>
             <div class="layer-edit-list" id="layer-edit-list">
                 <p>Layer management tools for existing data only.</p>
                 <p>Use the map interface to visualize and interact with layers.</p>
@@ -357,8 +422,8 @@
         </div>
 
         <!-- Database Management Form -->
-        <div id="admin-form-database" class="admin-form">
-            <h4>Database Management</h4>
+        <div id="admin-form-database" class="admin-form" role="tabpanel">
+            <h3>Database Management</h3>
             <div class="database-stats" id="database-stats">
                 <p>Loading database statistics...</p>
             </div>
@@ -368,53 +433,68 @@
                 <button class="btn btn-warning" id="backup-database">Create Backup</button>
             </div>
             <div class="optimization-results" id="optimization-results">
-                <h5>Optimization Results</h5>
-                <div class="results-content"></div>
+                <h4>Optimization Results</h4>
+                <div class="results-content" role="log" aria-live="polite"></div>
             </div>
         </div>
     </div>
 
     <!-- Loading Overlay -->
-    <div id="loading-overlay" class="loading-overlay">
+    <div id="loading-overlay" class="loading-overlay" role="dialog" aria-labelledby="loading-title">
         <div class="loading-content">
-            <div class="spinner"></div>
-            <h3>Loading CO₂ Storage Atlas</h3>
-            <p id="loading-status">Initializing application...</p>
+            <div class="spinner" role="progressbar" aria-label="Loading application"></div>
+            <h2 id="loading-title">Loading CO₂ Storage Atlas</h2>
+            <p id="loading-status" aria-live="polite">Initializing application...</p>
             <div class="loading-progress">
                 <div class="progress-bar">
-                    <div class="progress-fill" id="progress-fill"></div>
+                    <div class="progress-fill" id="progress-fill" 
+                         role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
                 </div>
-                <span class="progress-text" id="progress-text">0%</span>
+                <span class="progress-text" id="progress-text" aria-live="polite">0%</span>
             </div>
         </div>
     </div>
 
     <!-- Toast Container for Notifications -->
-    <div id="toast-container" class="toast-container"></div>
+    <div id="toast-container" class="toast-container" 
+         role="region" aria-label="Notifications" aria-live="polite"></div>
 
     <!-- Map Click Coordinates Display -->
     <div id="coordinates-display" class="coordinates-display">
         <span id="coordinates-text">Click on map to get coordinates</span>
-        <button id="close-coordinates">×</button>
+        <button id="close-coordinates" aria-label="Close coordinates display">×</button>
     </div>
 
     <!-- Scripts -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" 
             integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" 
-            crossorigin=""></script>
+            crossorigin="" defer></script>
     
     <!-- Leaflet MarkerCluster JS -->
-    <script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster.js"></script>
+    <script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster.js" defer></script>
     
     <!-- Custom JavaScript -->
-    <script src="js/app.js"></script>
+    <script src="js/app.js" defer></script>
     
+    <!-- Initialization Script -->
     <script>
-        // FIXED: Initialize application with proper event handling
+        // Application initialization with error handling
         document.addEventListener('DOMContentLoaded', function() {
             console.log('🌍 DOM Content Loaded - Setting up application...');
             
-            // Wait for atlas to be initialized before setting up additional event handlers
+            // Check if Leaflet is loaded
+            if (typeof L === 'undefined') {
+                console.error('Leaflet not loaded');
+                document.getElementById('loading-status').textContent = 'Error: Leaflet library not loaded';
+                return;
+            }
+            
+            // Check for MarkerCluster
+            if (typeof L.markerClusterGroup === 'undefined') {
+                console.warn('Leaflet MarkerCluster plugin not loaded, clustering disabled');
+            }
+            
+            // Initialize UI handlers after atlas is ready
             const initializeUIHandlers = () => {
                 if (!window.atlas) {
                     setTimeout(initializeUIHandlers, 100);
@@ -423,7 +503,7 @@
                 
                 console.log('📋 Setting up UI event handlers...');
                 
-                // FIXED: Panel toggle - single event handler with improved debugging
+                // Panel toggle handler
                 const setupPanelToggle = () => {
                     const panelToggle = document.getElementById('panel-toggle');
                     const controlPanel = document.getElementById('control-panel');
@@ -433,7 +513,6 @@
                         return;
                     }
                     
-                    // Remove any existing listeners to prevent duplicates
                     panelToggle.removeEventListener('click', handlePanelToggle);
                     panelToggle.addEventListener('click', handlePanelToggle);
                     
@@ -441,44 +520,39 @@
                         e.preventDefault();
                         e.stopPropagation();
                         
-                        console.log('🔄 Panel toggle clicked');
-                        
                         const toggleIcon = panelToggle.querySelector('.toggle-icon');
                         const isCollapsed = controlPanel.classList.contains('collapsed');
                         
                         if (isCollapsed) {
-                            // Expand panel
                             controlPanel.classList.remove('collapsed');
                             if (toggleIcon) toggleIcon.textContent = '−';
-                            console.log('📖 Panel expanded');
+                            panelToggle.setAttribute('aria-expanded', 'true');
                         } else {
-                            // Collapse panel
                             controlPanel.classList.add('collapsed');
                             if (toggleIcon) toggleIcon.textContent = '+';
-                            console.log('📕 Panel collapsed');
+                            panelToggle.setAttribute('aria-expanded', 'false');
                         }
                         
-                        // Save state to localStorage
                         localStorage.setItem('controlPanelCollapsed', controlPanel.classList.contains('collapsed'));
                     }
-                    
-                    console.log('✅ Panel toggle handler attached');
                 };
                 
-                // Setup panel toggle
                 setupPanelToggle();
                 
                 // Admin tab functionality
                 document.querySelectorAll('.admin-tab').forEach(tab => {
                     tab.addEventListener('click', function() {
-                        // Remove active class from all tabs and forms
-                        document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
+                        document.querySelectorAll('.admin-tab').forEach(t => {
+                            t.classList.remove('active');
+                            t.setAttribute('aria-selected', 'false');
+                            t.setAttribute('tabindex', '-1');
+                        });
                         document.querySelectorAll('.admin-form').forEach(f => f.classList.remove('active'));
                         
-                        // Add active class to clicked tab
                         this.classList.add('active');
+                        this.setAttribute('aria-selected', 'true');
+                        this.setAttribute('tabindex', '0');
                         
-                        // Show corresponding form
                         const formId = 'admin-form-' + this.dataset.tab;
                         const form = document.getElementById(formId);
                         if (form) {
@@ -487,76 +561,13 @@
                     });
                 });
 
-                // Close admin panel
-                const closeAdminPanel = document.getElementById('close-admin-panel');
-                if (closeAdminPanel) {
-                    closeAdminPanel.addEventListener('click', function() {
-                        document.getElementById('admin-panel').style.display = 'none';
-                    });
-                }
-
-                // Close coordinates display
-                const closeCoordinates = document.getElementById('close-coordinates');
-                if (closeCoordinates) {
-                    closeCoordinates.addEventListener('click', function() {
-                        document.getElementById('coordinates-display').style.display = 'none';
-                    });
-                }
-
-                // Performance controls
-                const clusteringToggle = document.getElementById('clustering-enabled');
-                if (clusteringToggle) {
-                    clusteringToggle.addEventListener('change', function() {
-                        if (window.atlas) {
-                            window.atlas.toggleClustering(this.checked);
-                        }
-                    });
-                }
-
-                const performanceToggle = document.getElementById('performance-mode');
-                if (performanceToggle) {
-                    performanceToggle.addEventListener('change', function() {
-                        if (window.atlas) {
-                            window.atlas.performanceMode = this.checked;
-                        }
-                    });
-                }
-
-                // Enhanced admin functionality
-                const refreshLayerList = document.getElementById('refresh-layer-list');
-                if (refreshLayerList) {
-                    refreshLayerList.addEventListener('click', function() {
-                        if (window.atlas) {
-                            window.atlas.refreshAllLayers();
-                        }
-                    });
-                }
-
-                const toggleAllLayers = document.getElementById('toggle-all-layers');
-                if (toggleAllLayers) {
-                    toggleAllLayers.addEventListener('click', function() {
-                        if (window.atlas) {
-                            window.atlas.toggleAllLayers();
-                        }
-                    });
-                }
-
-                const optimizeDatabase = document.getElementById('optimize-database');
-                if (optimizeDatabase) {
-                    optimizeDatabase.addEventListener('click', function() {
-                        if (window.atlas) {
-                            window.atlas.optimizeDatabase();
-                        }
-                    });
-                }
-
                 console.log('✅ All UI handlers initialized');
             };
             
             // Start the initialization process
             initializeUIHandlers();
             
-            // FIXED: Restore panel state from localStorage after a brief delay
+            // Restore panel state
             setTimeout(() => {
                 const controlPanelCollapsed = localStorage.getItem('controlPanelCollapsed') === 'true';
                 
@@ -568,11 +579,21 @@
                         controlPanel.classList.add('collapsed');
                         const toggleIcon = panelToggle.querySelector('.toggle-icon');
                         if (toggleIcon) toggleIcon.textContent = '+';
-                        console.log('🔄 Restored collapsed panel state from localStorage');
+                        panelToggle.setAttribute('aria-expanded', 'false');
                     }
                 }
             }, 200);
         });
+    </script>
+
+    <!-- Service Worker Registration (Optional for PWA features) -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function() {
+                // Uncomment to enable service worker
+                // navigator.serviceWorker.register('/sw.js');
+            });
+        }
     </script>
 </body>
 </html>
