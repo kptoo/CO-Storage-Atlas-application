@@ -8,17 +8,16 @@ const turf = require('@turf/turf');
 const { Client } = require('pg');
 require('dotenv').config();
 
-class OptimizedDataImporter {
+class ProductionDataImporter {
     constructor() {
         this.client = new Client({
-            host: process.env.DB_HOST || 'localhost',
-            port: process.env.DB_PORT || 5432,
-            user: process.env.DB_USER || 'postgres',
-            password: process.env.DB_PASSWORD,
-            database: process.env.DB_NAME || 'co2_storage_atlas',
+            connectionString: process.env.DATABASE_URL,
+            ssl: process.env.NODE_ENV === 'production' ? { 
+                rejectUnauthorized: false 
+            } : false
         });
 
-        // Data directories
+        // Data directories - adjusted for production deployment
         this.dataDir = path.join(__dirname, '..', 'zurich_data');
         this.shapefileDir = path.join(__dirname, '..', 'Shapefiles');
         this.unsuitableDir = path.join(__dirname, '..', 'Unsuitable');
@@ -53,25 +52,34 @@ class OptimizedDataImporter {
         };
 
         this.areaOfInterestBounds = null;
+        this.isProduction = process.env.NODE_ENV === 'production';
     }
 
     async importAllData() {
         try {
-            console.log('Starting optimized data import...\n');
+            console.log('Starting production data import...\n');
+            console.log(`Environment: ${this.isProduction ? 'Production' : 'Development'}`);
+            
             await this.client.connect();
+            console.log('Connected to database');
 
+            // Check if data directories exist
+            await this.checkDataDirectories();
+
+            // Import data in order of dependencies
             await this.loadAreaBounds();
             await this.clearExistingData();
             await this.importBoundaries();
-            await this.importUpdatedVotingDistricts(); // Updated: use shapefile directly
+            await this.importUpdatedVotingDistricts();
             await this.importCSVExcelData();
             await this.importShapefileData();
             await this.importUnsuitableAreasOptimized();
             await this.importTransportInfrastructure();
             await this.createMaterializedViews();
+            await this.updateGeometryValidation();
             
             this.printSummary();
-            console.log('\nOptimized data import completed successfully!');
+            console.log('\nProduction data import completed successfully!');
 
         } catch (error) {
             console.error('Import failed:', error);
@@ -81,8 +89,28 @@ class OptimizedDataImporter {
         }
     }
 
+    async checkDataDirectories() {
+        console.log('Checking data directories...');
+        const directories = [
+            { name: 'zurich_data', path: this.dataDir },
+            { name: 'Shapefiles', path: this.shapefileDir },
+            { name: 'Unsuitable', path: this.unsuitableDir },
+            { name: 'roads', path: this.roadsDir },
+            { name: 'railway', path: this.railwayDir },
+            { name: 'Area Of Interest', path: this.areaOfInterestDir }
+        ];
+
+        for (const dir of directories) {
+            if (fs.existsSync(dir.path)) {
+                console.log(`✅ Found ${dir.name} directory`);
+            } else {
+                console.log(`⚠️  Missing ${dir.name} directory: ${dir.path}`);
+            }
+        }
+    }
+
     async loadAreaBounds() {
-        console.log('Loading simplified area bounds...');
+        console.log('Loading area bounds...');
         
         const areaFiles = [
             path.join(this.areaOfInterestDir, 'salzburg.shp'),
@@ -93,7 +121,7 @@ class OptimizedDataImporter {
 
         for (const file of areaFiles) {
             if (fs.existsSync(file)) {
-                console.log(`  Processing ${path.basename(file)}...`);
+                console.log(`Processing ${path.basename(file)}...`);
                 try {
                     await shapefile.read(file).then(collection => {
                         collection.features.forEach(feature => {
@@ -112,13 +140,19 @@ class OptimizedDataImporter {
                         });
                     });
                 } catch (error) {
-                    console.warn(`  Warning: Could not process ${file}:`, error.message);
+                    console.warn(`Warning: Could not process ${file}:`, error.message);
                 }
+            } else {
+                console.log(`Area file not found: ${file}`);
             }
         }
 
         this.areaOfInterestBounds = combinedBounds;
-        console.log(`Area bounds loaded: [${combinedBounds ? combinedBounds.map(n => n.toFixed(3)).join(', ') : 'No bounds'}]`);
+        if (combinedBounds) {
+            console.log(`Area bounds loaded: [${combinedBounds.map(n => n.toFixed(3)).join(', ')}]`);
+        } else {
+            console.log('No area bounds loaded - will import all data');
+        }
     }
 
     isWithinAreaBounds(longitude, latitude) {
@@ -151,9 +185,10 @@ class OptimizedDataImporter {
 
         for (const table of tables) {
             try {
-                await this.client.query(`TRUNCATE TABLE ${table} CASCADE`);
+                await this.client.query(`TRUNCATE TABLE ${table} RESTART IDENTITY CASCADE`);
+                console.log(`Cleared ${table}`);
             } catch (error) {
-                console.warn(`Could not truncate ${table}:`, error.message);
+                console.warn(`Could not clear ${table}:`, error.message);
             }
         }
     }
@@ -162,7 +197,12 @@ class OptimizedDataImporter {
         console.log('Importing study area boundaries...');
         const boundaryFile = path.join(this.shapefileDir, 'sal_aus_communes.shp');
         
-        if (fs.existsSync(boundaryFile)) {
+        if (!fs.existsSync(boundaryFile)) {
+            console.log('Boundary file not found, skipping...');
+            return;
+        }
+
+        try {
             const features = [];
             await shapefile.read(boundaryFile).then(collection => {
                 collection.features.forEach(feature => features.push(feature));
@@ -177,7 +217,7 @@ class OptimizedDataImporter {
                 await this.client.query(`
                     INSERT INTO study_area_boundaries (g_id, g_name, geom, properties)
                     VALUES ($1, $2, ST_SetSRID(ST_GeomFromGeoJSON($3), 4326), $4)
-                    ON CONFLICT (g_id) DO UPDATE SET geom = EXCLUDED.geom
+                    ON CONFLICT (g_id) DO UPDATE SET geom = EXCLUDED.geom, properties = EXCLUDED.properties
                 `, [
                     properties.g_id || properties.G_ID,
                     properties.g_name || properties.G_NAME,
@@ -187,12 +227,11 @@ class OptimizedDataImporter {
                 processed++;
             }
             console.log(`Imported ${processed} boundaries`);
-        } else {
-            console.log('Boundary file not found, skipping...');
+        } catch (error) {
+            console.error('Error importing boundaries:', error);
         }
     }
 
-    // UPDATED: Import voting districts directly from updated shapefile with correct column mapping
     async importUpdatedVotingDistricts() {
         console.log('Importing voting districts from updated shapefile...');
         const votingFile = path.join(this.shapefileDir, 'updated_commune.shp');
@@ -202,154 +241,91 @@ class OptimizedDataImporter {
             return;
         }
 
-        const features = [];
-        await shapefile.read(votingFile).then(collection => {
-            collection.features.forEach(feature => features.push(feature));
-        });
+        try {
+            const features = [];
+            await shapefile.read(votingFile).then(collection => {
+                collection.features.forEach(feature => features.push(feature));
+            });
 
-        let processed = 0;
-        let validGeometry = 0;
-        let districtsWithData = 0;
-        let districtsWithoutData = 0;
+            let processed = 0;
+            let validGeometry = 0;
+            let districtsWithData = 0;
 
-        for (const feature of features) {
-            const properties = feature.properties;
-            console.log(Object.keys(properties));
-            const geometry = this.transformGeometry(feature.geometry);
+            for (const feature of features) {
+                const properties = feature.properties;
+                const geometry = this.transformGeometry(feature.geometry);
+                
+                processed++;
+                
+                if (!this.isValidGeoJSON(geometry)) {
+                    console.warn(`Invalid geometry for district: ${properties.g_name || properties.name}`);
+                    continue;
+                }
 
-            // 🔎 Debug log: check raw properties coming from shapefile
-            console.log("District:", properties.g_name), {
-                "SPÖ?": properties["SPÃ–_perce"],
-                "ÖVP?": properties["Ã–VP_perce"],
-                "FPÖ?": properties["FPÃ–_perce"],
-                "Grüne?": properties["GRÃœNE_per"],
-                "KPÖ?": properties["KPÃ–_perce"],
-                "NEOS?": properties["NEOS_perce"]
+                validGeometry++;
+
+                // Map the correct column names from the updated shapefile
+                const spoPercent = parseFloat(properties["SPO_perc"]) || 0;
+                const grunePercent = parseFloat(properties["GRUENE_per"]) || 0;
+                const kpoPercent = parseFloat(properties["KPOE_perc"]) || 0;
+                const ovpPercent = parseFloat(properties["OEVP_perc"]) || 0;
+                const fpoPercent = parseFloat(properties["FPOE_perc"]) || 0;
+                const neosPercent = parseFloat(properties["NEOS_perce"]) || 0;
+                const leftGreenCombined = spoPercent + grunePercent + kpoPercent;
+
+                const hasVotingData = spoPercent > 0 || grunePercent > 0 || kpoPercent > 0 || 
+                                     ovpPercent > 0 || fpoPercent > 0 || neosPercent > 0;
+
+                if (hasVotingData) {
+                    districtsWithData++;
+                }
+
+                await this.client.query(`
+                    INSERT INTO voting_districts (
+                        gkz, name, spo_percent, ovp_percent, fpo_percent,
+                        grune_percent, kpo_percent, neos_percent,
+                        left_green_combined, choropleth_color, geom, properties,
+                        has_voting_data, geometry_valid
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 
+                        ST_SetSRID(ST_GeomFromGeoJSON($11), 4326), $12, $13, true)
+                    ON CONFLICT (gkz) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        spo_percent = EXCLUDED.spo_percent,
+                        ovp_percent = EXCLUDED.ovp_percent,
+                        fpo_percent = EXCLUDED.fpo_percent,
+                        grune_percent = EXCLUDED.grune_percent,
+                        kpo_percent = EXCLUDED.kpo_percent,
+                        neos_percent = EXCLUDED.neos_percent,
+                        left_green_combined = EXCLUDED.left_green_combined,
+                        choropleth_color = EXCLUDED.choropleth_color,
+                        geom = EXCLUDED.geom,
+                        properties = EXCLUDED.properties,
+                        has_voting_data = EXCLUDED.has_voting_data,
+                        geometry_valid = EXCLUDED.geometry_valid
+                `, [
+                    parseInt(properties.gkz) || null,
+                    properties.g_name || properties.name || 'Unknown District',
+                    spoPercent, ovpPercent, fpoPercent, grunePercent, kpoPercent, neosPercent,
+                    leftGreenCombined,
+                    hasVotingData ? this.getVotingColor(leftGreenCombined) : '#cccccc',
+                    JSON.stringify(geometry),
+                    JSON.stringify(properties),
+                    hasVotingData
+                ]);
             }
             
-            processed++;
-            
-            if (!this.isValidGeoJSON(geometry)) {
-                console.warn(`Invalid geometry for district: ${properties.g_name || properties.name}`);
-                continue;
-            }
-
-            validGeometry++;
-
-            function getProp(properties, keys){
-                // normalize props keys to ASCII-friendly versions
-                const normalized = {};
-                for (const [k, v] of Object.entries(properties)) {
-                    normalized[k
-                        .replace(/Ã–/g, "OE")
-                        .replace(/Ãœ/g, "UE")
-                        .replace(/Ã„/g, "AE")
-                        .replace(/Ã¶/g, "oe")
-                        .replace(/Ã¼/g, "ue")
-                        .replace(/Ã¤/g, "ae")
-                        .replace(/ÃŸ/g, "ss")
-                        .replace(/[^A-Za-z0-9_]/g, "_")
-                    ] = v;
-                }
-                for (const key of keys) {
-                    if (normalized[key] !== undefined) {
-                        return parseFloat(normalized[key]) || 0;
-                    }
-                }
-                return 0;
-            }
-
-            // Map the correct column names from the updated shapefile
-            const spoPercent   = parseFloat(properties["SPO_perc"]) || 0;
-            const grunePercent = parseFloat(properties["GRUENE_per"]) || 0;
-            const kpoPercent   = parseFloat(properties["KPOE_perc"]) || 0;
-            const ovpPercent   = parseFloat(properties["OEVP_perc"]) || 0;
-            const fpoPercent   = parseFloat(properties["FPOE_perc"]) || 0;
-            const neosPercent  = parseFloat(properties["NEOS_perce"]) || 0;
-            const leftGreenCombined = spoPercent + grunePercent + kpoPercent;
-
-            // Check if this district has voting data (any non-zero values)
-            const hasVotingData = spoPercent > 0 || grunePercent > 0 || kpoPercent > 0 || 
-                                 ovpPercent > 0 || fpoPercent > 0 || neosPercent > 0;
-
-            if (hasVotingData) {
-                districtsWithData++;
-            } else {
-                districtsWithoutData++;
-            }
-
-            await this.client.query(`
-                INSERT INTO voting_districts (
-                    gkz, name, spo_percent, ovp_percent, fpo_percent,
-                    grune_percent, kpo_percent, neos_percent,
-                    left_green_combined, choropleth_color, geom, properties,
-                    has_voting_data
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 
-                    ST_SetSRID(ST_GeomFromGeoJSON($11), 4326), $12, $13)
-                ON CONFLICT (gkz) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    spo_percent = EXCLUDED.spo_percent,
-                    ovp_percent = EXCLUDED.ovp_percent,
-                    fpo_percent = EXCLUDED.fpo_percent,
-                    grune_percent = EXCLUDED.grune_percent,
-                    kpo_percent = EXCLUDED.kpo_percent,
-                    neos_percent = EXCLUDED.neos_percent,
-                    left_green_combined = EXCLUDED.left_green_combined,
-                    choropleth_color = EXCLUDED.choropleth_color,
-                    geom = EXCLUDED.geom,
-                    properties = EXCLUDED.properties,
-                    has_voting_data = EXCLUDED.has_voting_data
-            `, [
-                parseInt(properties.gkz) || null,
-                properties.g_name || properties.name || 'Unknown District',
-                spoPercent,
-                ovpPercent,
-                fpoPercent,
-                grunePercent,
-                kpoPercent,
-                neosPercent,
-                leftGreenCombined,
-                hasVotingData ? this.getVotingColor(leftGreenCombined) : '#cccccc',
-                JSON.stringify(geometry),
-                JSON.stringify({
-                    ...properties,
-                    // Store original column names for reference and debugging
-                    original_columns: {
-                        spo_votes: properties['SPÖ_votes'],
-                        spo_percent: properties['SPÖ_perce'],
-                        ovp_votes: properties['ÖVP_votes'], 
-                        ovp_percent: properties['ÖVP_perce'],
-                        fpo_votes: properties['FPÖ_votes'],
-                        fpo_percent: properties['FPÖ_perce'],
-                        grune_votes: properties['GRÜNE_vot'],
-                        grune_percent: properties['GRÜNE_per'],
-                        kpo_votes: properties['KPÖ_votes'],
-                        kpo_percent: properties['KPÖ_perce'],
-                        neos_votes: properties['NEOS_votes'],
-                        neos_percent: properties['NEOS_perce'],
-                        bier_votes: properties['BIER_votes'],
-                        bier_percent: properties['BIER_perce'],
-                        mfg_votes: properties['MFG_votes'],
-                        mfg_percent: properties['MFG_percen'],
-                        gaza_votes: properties['GAZA_votes'],
-                        gaza_percent: properties['GAZA_perce']
-                    }
-                }),
-                hasVotingData
-            ]);
+            this.stats.votingDistricts = validGeometry;
+            console.log(`Imported ${validGeometry} voting districts with valid geometry from ${processed} total features`);
+            console.log(`Districts with voting data: ${districtsWithData}`);
+        } catch (error) {
+            console.error('Error importing voting districts:', error);
         }
-        
-        this.stats.votingDistricts = validGeometry;
-        console.log(`Imported ${validGeometry} voting districts with valid geometry from ${processed} total features`);
-        console.log(`  - Districts with voting data: ${districtsWithData}`);
-        console.log(`  - Districts without voting data: ${districtsWithoutData}`);
     }
 
     async importCSVExcelData() {
         console.log('\nImporting CSV/Excel data...');
         
         await this.importCO2Sources();
-        // Removed voting data import since it's now handled by shapefile
         await this.importLandfills();
         await this.importGravelPits();
         await this.importWastewaterPlants();
@@ -362,50 +338,54 @@ class OptimizedDataImporter {
             return;
         }
 
-        console.log('  Importing CO2 sources...');
-        const workbook = XLSX.readFile(filePath);
-        const sheet = workbook.Sheets[workbook.SheetNames[0]];
-        const data = XLSX.utils.sheet_to_json(sheet);
+        console.log('Importing CO2 sources...');
+        try {
+            const workbook = XLSX.readFile(filePath);
+            const sheet = workbook.Sheets[workbook.SheetNames[0]];
+            const data = XLSX.utils.sheet_to_json(sheet);
 
-        let imported = 0;
-        let filtered = 0;
+            let imported = 0;
+            let filtered = 0;
 
-        for (const row of data) {
-            const longitude = parseFloat(row['Longitude']);
-            const latitude = parseFloat(row['Latitude']);
-            
-            if (!this.isValidWGS84([longitude, latitude])) continue;
-            
-            if (!this.isWithinAreaBounds(longitude, latitude)) {
-                filtered++;
-                continue;
+            for (const row of data) {
+                const longitude = parseFloat(row['Longitude']);
+                const latitude = parseFloat(row['Latitude']);
+                
+                if (!this.isValidWGS84([longitude, latitude])) continue;
+                
+                if (!this.isWithinAreaBounds(longitude, latitude)) {
+                    filtered++;
+                    continue;
+                }
+
+                const totalCO2 = parseFloat(row['Total_CO2_t'] || 0);
+                const isProminent = totalCO2 > 50000;
+
+                await this.client.query(`
+                    INSERT INTO co2_sources (
+                        plant_name, plant_type, total_co2_t, fossil_co2_t,
+                        biogenic_co2_t, comment, is_prominent, pin_size,
+                        geom, properties
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 
+                        ST_SetSRID(ST_MakePoint($9, $10), 4326), $11)
+                `, [
+                    row['Plant Name'], row['Plant Type'], totalCO2,
+                    parseFloat(row['Fossil_CO2_t'] || 0),
+                    parseFloat(row['Biogenic_CO2_t'] || 0),
+                    row['Comment'] || '', isProminent,
+                    isProminent ? 4 : 2,
+                    longitude, latitude,
+                    JSON.stringify(row)
+                ]);
+                imported++;
             }
-
-            const totalCO2 = parseFloat(row['Total_CO2_t'] || 0);
-            const isProminent = totalCO2 > 50000;
-
-            await this.client.query(`
-                INSERT INTO co2_sources (
-                    plant_name, plant_type, total_co2_t, fossil_co2_t,
-                    biogenic_co2_t, comment, is_prominent, pin_size,
-                    geom, properties
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 
-                    ST_SetSRID(ST_MakePoint($9, $10), 4326), $11)
-            `, [
-                row['Plant Name'], row['Plant Type'], totalCO2,
-                parseFloat(row['Fossil_CO2_t'] || 0),
-                parseFloat(row['Biogenic_CO2_t'] || 0),
-                row['Comment'] || '', isProminent,
-                isProminent ? 4 : 2,
-                longitude, latitude,
-                JSON.stringify(row)
-            ]);
-            imported++;
+            
+            this.stats.co2Sources = imported;
+            this.stats.filteredOutByArea += filtered;
+            console.log(`Imported ${imported} CO2 sources (${filtered} filtered out by area)`);
+        } catch (error) {
+            console.error('Error importing CO2 sources:', error);
         }
-        
-        this.stats.co2Sources = imported;
-        this.stats.filteredOutByArea += filtered;
-        console.log(`Imported ${imported} CO2 sources (${filtered} filtered out by area)`);
     }
 
     async importLandfills() {
@@ -415,49 +395,53 @@ class OptimizedDataImporter {
             return;
         }
 
-        console.log('  Importing landfills...');
-        const results = [];
-        
-        await new Promise((resolve, reject) => {
-            fs.createReadStream(filePath)
-                .pipe(csv())
-                .on('data', (data) => results.push(data))
-                .on('end', resolve)
-                .on('error', reject);
-        });
-
-        let imported = 0;
-        let filtered = 0;
-
-        for (const row of results) {
-            const x = parseFloat(row['X_Koordina']);
-            const y = parseFloat(row['Y_Koordina']);
+        console.log('Importing landfills...');
+        try {
+            const results = [];
             
-            if (!this.isValidWGS84([y, x])) continue;
-            
-            if (!this.isWithinAreaBounds(y, x)) {
-                filtered++;
-                continue;
+            await new Promise((resolve, reject) => {
+                fs.createReadStream(filePath)
+                    .pipe(csv())
+                    .on('data', (data) => results.push(data))
+                    .on('end', resolve)
+                    .on('error', reject);
+            });
+
+            let imported = 0;
+            let filtered = 0;
+
+            for (const row of results) {
+                const x = parseFloat(row['X_Koordina']);
+                const y = parseFloat(row['Y_Koordina']);
+                
+                if (!this.isValidWGS84([y, x])) continue;
+                
+                if (!this.isWithinAreaBounds(y, x)) {
+                    filtered++;
+                    continue;
+                }
+
+                await this.client.query(`
+                    INSERT INTO landfills (
+                        company_name, location_name, district, address,
+                        facility_type, geom, properties
+                    ) VALUES ($1, $2, $3, $4, $5, 
+                        ST_SetSRID(ST_MakePoint($6, $7), 4326), $8)
+                `, [
+                    row['Firmen_Nam'], row['Standort_N'], row['Standort_B'],
+                    row['Standort_S'], row['Anlagenbez'],
+                    y, x,
+                    JSON.stringify(row)
+                ]);
+                imported++;
             }
-
-            await this.client.query(`
-                INSERT INTO landfills (
-                    company_name, location_name, district, address,
-                    facility_type, geom, properties
-                ) VALUES ($1, $2, $3, $4, $5, 
-                    ST_SetSRID(ST_MakePoint($6, $7), 4326), $8)
-            `, [
-                row['Firmen_Nam'], row['Standort_N'], row['Standort_B'],
-                row['Standort_S'], row['Anlagenbez'],
-                y, x,
-                JSON.stringify(row)
-            ]);
-            imported++;
+            
+            this.stats.landfills = imported;
+            this.stats.filteredOutByArea += filtered;
+            console.log(`Imported ${imported} landfills (${filtered} filtered out by area)`);
+        } catch (error) {
+            console.error('Error importing landfills:', error);
         }
-        
-        this.stats.landfills = imported;
-        this.stats.filteredOutByArea += filtered;
-        console.log(`Imported ${imported} landfills (${filtered} filtered out by area)`);
     }
 
     async importGravelPits() {
@@ -467,96 +451,104 @@ class OptimizedDataImporter {
             return;
         }
 
-        console.log('  Importing gravel pits...');
-        const results = [];
-        
-        await new Promise((resolve, reject) => {
-            fs.createReadStream(filePath)
-                .pipe(csv())
-                .on('data', (data) => results.push(data))
-                .on('end', resolve)
-                .on('error', reject);
-        });
-
-        let imported = 0;
-        let filtered = 0;
-
-        for (const row of results) {
-            const lng = parseFloat(row['center_lng']);
-            const lat = parseFloat(row['center_lat']);
+        console.log('Importing gravel pits...');
+        try {
+            const results = [];
             
-            if (!this.isValidWGS84([lng, lat])) continue;
-            
-            if (!this.isWithinAreaBounds(lng, lat)) {
-                filtered++;
-                continue;
+            await new Promise((resolve, reject) => {
+                fs.createReadStream(filePath)
+                    .pipe(csv())
+                    .on('data', (data) => results.push(data))
+                    .on('end', resolve)
+                    .on('error', reject);
+            });
+
+            let imported = 0;
+            let filtered = 0;
+
+            for (const row of results) {
+                const lng = parseFloat(row['center_lng']);
+                const lat = parseFloat(row['center_lat']);
+                
+                if (!this.isValidWGS84([lng, lat])) continue;
+                
+                if (!this.isWithinAreaBounds(lng, lat)) {
+                    filtered++;
+                    continue;
+                }
+
+                await this.client.query(`
+                    INSERT INTO gravel_pits (name, resource, tags, geom, properties)
+                    VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326), $6)
+                `, [
+                    row['name'], row['resource'], row['tags'],
+                    lng, lat,
+                    JSON.stringify(row)
+                ]);
+                imported++;
             }
-
-            await this.client.query(`
-                INSERT INTO gravel_pits (name, resource, tags, geom, properties)
-                VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326), $6)
-            `, [
-                row['name'], row['resource'], row['tags'],
-                lng, lat,
-                JSON.stringify(row)
-            ]);
-            imported++;
+            
+            this.stats.gravelPits = imported;
+            this.stats.filteredOutByArea += filtered;
+            console.log(`Imported ${imported} gravel pits (${filtered} filtered out by area)`);
+        } catch (error) {
+            console.error('Error importing gravel pits:', error);
         }
-        
-        this.stats.gravelPits = imported;
-        this.stats.filteredOutByArea += filtered;
-        console.log(`Imported ${imported} gravel pits (${filtered} filtered out by area)`);
     }
 
     async importWastewaterPlants() {
         const filePath = path.join(this.dataDir, 'Kläranlagen  Wastewater treatment plants.csv');
-        if (!fs.existsSync(filePath)) {
+        if (!fs.existsExists(filePath)) {
             console.log('Wastewater plants file not found');
             return;
         }
 
-        console.log('  Importing wastewater plants...');
-        const results = [];
-        
-        await new Promise((resolve, reject) => {
-            fs.createReadStream(filePath)
-                .pipe(csv())
-                .on('data', (data) => results.push(data))
-                .on('end', resolve)
-                .on('error', reject);
-        });
-
-        let imported = 0;
-        let filtered = 0;
-
-        for (const row of results) {
-            const longitude = parseFloat(row['long']);
-            const latitude = parseFloat(row['lat']);
+        console.log('Importing wastewater plants...');
+        try {
+            const results = [];
             
-            if (!this.isValidWGS84([longitude, latitude])) continue;
-            
-            if (!this.isWithinAreaBounds(longitude, latitude)) {
-                filtered++;
-                continue;
+            await new Promise((resolve, reject) => {
+                fs.createReadStream(filePath)
+                    .pipe(csv())
+                    .on('data', (data) => results.push(data))
+                    .on('end', resolve)
+                    .on('error', reject);
+            });
+
+            let imported = 0;
+            let filtered = 0;
+
+            for (const row of results) {
+                const longitude = parseFloat(row['long']);
+                const latitude = parseFloat(row['lat']);
+                
+                if (!this.isValidWGS84([longitude, latitude])) continue;
+                
+                if (!this.isWithinAreaBounds(longitude, latitude)) {
+                    filtered++;
+                    continue;
+                }
+
+                await this.client.query(`
+                    INSERT INTO wastewater_plants (
+                        pk, label, treatment_type, capacity, geom, properties
+                    ) VALUES ($1, $2, $3, $4, 
+                        ST_SetSRID(ST_MakePoint($5, $6), 4326), $7)
+                `, [
+                    row['PK'], row['LABEL'], row['ABW_BEHANDLUNG'],
+                    parseInt(row['KAPAZITAET'] || 0),
+                    longitude, latitude,
+                    JSON.stringify(row)
+                ]);
+                imported++;
             }
-
-            await this.client.query(`
-                INSERT INTO wastewater_plants (
-                    pk, label, treatment_type, capacity, geom, properties
-                ) VALUES ($1, $2, $3, $4, 
-                    ST_SetSRID(ST_MakePoint($5, $6), 4326), $7)
-            `, [
-                row['PK'], row['LABEL'], row['ABW_BEHANDLUNG'],
-                parseInt(row['KAPAZITAET'] || 0),
-                longitude, latitude,
-                JSON.stringify(row)
-            ]);
-            imported++;
+            
+            this.stats.wastewaterPlants = imported;
+            this.stats.filteredOutByArea += filtered;
+            console.log(`Imported ${imported} wastewater plants (${filtered} filtered out by area)`);
+        } catch (error) {
+            console.error('Error importing wastewater plants:', error);
         }
-        
-        this.stats.wastewaterPlants = imported;
-        this.stats.filteredOutByArea += filtered;
-        console.log(`Imported ${imported} wastewater plants (${filtered} filtered out by area)`);
     }
 
     async importShapefileData() {
@@ -579,111 +571,114 @@ class OptimizedDataImporter {
                 continue;
             }
 
-            console.log(`  Importing ${gasFile.file}...`);
-            const features = [];
-            await shapefile.read(filePath).then(collection => {
-                collection.features.forEach(feature => features.push(feature));
-            });
+            console.log(`Importing ${gasFile.file}...`);
+            try {
+                const features = [];
+                await shapefile.read(filePath).then(collection => {
+                    collection.features.forEach(feature => features.push(feature));
+                });
 
-            let imported = 0;
-            let filtered = 0;
+                let imported = 0;
+                let filtered = 0;
 
-            for (const feature of features) {
-                const geometry = this.transformGeometry(feature.geometry);
-                const properties = feature.properties;
+                for (const feature of features) {
+                    const geometry = this.transformGeometry(feature.geometry);
+                    const properties = feature.properties;
 
-                if (gasFile.type === 'line') {
-                    if (!this.isValidGeoJSON(geometry)) continue;
-                    
-                    if (this.areaOfInterestBounds) {
-                        const bounds = this.getGeometryBounds(geometry);
-                        if (!this.boundsIntersectArea(bounds)) {
+                    if (gasFile.type === 'line') {
+                        if (!this.isValidGeoJSON(geometry)) continue;
+                        
+                        if (this.areaOfInterestBounds) {
+                            const bounds = this.getGeometryBounds(geometry);
+                            if (!this.boundsIntersectArea(bounds)) {
+                                filtered++;
+                                continue;
+                            }
+                        }
+
+                        await this.client.query(`
+                            INSERT INTO gas_pipelines (
+                                name, operator, diameter, pressure_level,
+                                pipeline_type, geom, properties
+                            ) VALUES ($1, $2, $3, $4, $5, 
+                                ST_SetSRID(ST_GeomFromGeoJSON($6), 4326), $7)
+                        `, [
+                            properties.Pipeline || properties.name,
+                            properties.Operator, properties.Diameter,
+                            properties.Pressure, properties.Type || 'Gas Pipeline',
+                            JSON.stringify(geometry), JSON.stringify(properties)
+                        ]);
+                        this.stats.gasPipelines++;
+                        imported++;
+                    } else {
+                        const coords = this.extractCoordinates(geometry);
+                        
+                        if (!this.isValidWGS84(coords)) continue;
+                        
+                        if (!this.isWithinAreaBounds(coords[0], coords[1])) {
                             filtered++;
                             continue;
                         }
-                    }
 
-                    await this.client.query(`
-                        INSERT INTO gas_pipelines (
-                            name, operator, diameter, pressure_level,
-                            pipeline_type, geom, properties
-                        ) VALUES ($1, $2, $3, $4, $5, 
-                            ST_SetSRID(ST_GeomFromGeoJSON($6), 4326), $7)
-                    `, [
-                        properties.Pipeline || properties.name,
-                        properties.Operator, properties.Diameter,
-                        properties.Pressure, properties.Type || 'Gas Pipeline',
-                        JSON.stringify(geometry), JSON.stringify(properties)
-                    ]);
-                    this.stats.gasPipelines++;
-                    imported++;
-                } else {
-                    const coords = this.extractCoordinates(geometry);
-                    
-                    if (!this.isValidWGS84(coords)) continue;
-                    
-                    if (!this.isWithinAreaBounds(coords[0], coords[1])) {
-                        filtered++;
-                        continue;
-                    }
-
-                    const tableName = gasFile.table;
-                    
-                    if (tableName === 'gas_storage_sites') {
-                        await this.client.query(`
-                            INSERT INTO gas_storage_sites (
-                                name, operator, storage_type, capacity_bcm,
-                                geom, properties
-                            ) VALUES ($1, $2, $3, $4, 
-                                ST_SetSRID(ST_MakePoint($5, $6), 4326), $7)
-                        `, [
-                            properties.Name, properties.Operator,
-                            properties.Type, parseFloat(properties.Capacity || 0),
-                            coords[0], coords[1], JSON.stringify(properties)
-                        ]);
-                        this.stats.gasStorage++;
-                        imported++;
-                    } else if (tableName === 'gas_distribution_points') {
-                        await this.client.query(`
-                            INSERT INTO gas_distribution_points (
-                                name, type, operator, geom, properties
-                            ) VALUES ($1, $2, $3, 
-                                ST_SetSRID(ST_MakePoint($4, $5), 4326), $6)
-                        `, [
-                            properties.Name, 'Distribution Point',
-                            properties.Operator, coords[0], coords[1],
-                            JSON.stringify(properties)
-                        ]);
-                        this.stats.gasDistribution++;
-                        imported++;
-                    } else if (tableName === 'compressor_stations') {
-                        await this.client.query(`
-                            INSERT INTO compressor_stations (
-                                name, operator, capacity_info, geom, properties
-                            ) VALUES ($1, $2, $3, 
-                                ST_SetSRID(ST_MakePoint($4, $5), 4326), $6)
-                        `, [
-                            properties.Name, properties.Operator,
-                            properties.Capacity, coords[0], coords[1],
-                            JSON.stringify(properties)
-                        ]);
-                        this.stats.compressorStations++;
+                        const tableName = gasFile.table;
+                        
+                        if (tableName === 'gas_storage_sites') {
+                            await this.client.query(`
+                                INSERT INTO gas_storage_sites (
+                                    name, operator, storage_type, capacity_bcm,
+                                    geom, properties
+                                ) VALUES ($1, $2, $3, $4, 
+                                    ST_SetSRID(ST_MakePoint($5, $6), 4326), $7)
+                            `, [
+                                properties.Name, properties.Operator,
+                                properties.Type, parseFloat(properties.Capacity || 0),
+                                coords[0], coords[1], JSON.stringify(properties)
+                            ]);
+                            this.stats.gasStorage++;
+                        } else if (tableName === 'gas_distribution_points') {
+                            await this.client.query(`
+                                INSERT INTO gas_distribution_points (
+                                    name, type, operator, geom, properties
+                                ) VALUES ($1, $2, $3, 
+                                    ST_SetSRID(ST_MakePoint($4, $5), 4326), $6)
+                            `, [
+                                properties.Name, 'Distribution Point',
+                                properties.Operator, coords[0], coords[1],
+                                JSON.stringify(properties)
+                            ]);
+                            this.stats.gasDistribution++;
+                        } else if (tableName === 'compressor_stations') {
+                            await this.client.query(`
+                                INSERT INTO compressor_stations (
+                                    name, operator, capacity_info, geom, properties
+                                ) VALUES ($1, $2, $3, 
+                                    ST_SetSRID(ST_MakePoint($4, $5), 4326), $6)
+                            `, [
+                                properties.Name, properties.Operator,
+                                properties.Capacity, coords[0], coords[1],
+                                JSON.stringify(properties)
+                            ]);
+                            this.stats.compressorStations++;
+                        }
                         imported++;
                     }
                 }
+                
+                console.log(`Imported ${imported} from ${gasFile.file}${filtered > 0 ? ` (${filtered} filtered out by area)` : ''}`);
+                this.stats.filteredOutByArea += filtered;
+            } catch (error) {
+                console.error(`Error importing ${gasFile.file}:`, error);
             }
-            
-            if (filtered > 0) {
-                console.log(`Imported ${imported} from ${gasFile.file} (${filtered} filtered out by area)`);
-            } else {
-                console.log(`Imported ${imported} from ${gasFile.file}`);
-            }
-            this.stats.filteredOutByArea += filtered;
         }
     }
 
+    // Optimized unsuitable areas import
     async importUnsuitableAreasOptimized() {
-        console.log('\nImporting unsuitable areas (optimized)...');
+        console.log('\nImporting unsuitable areas (optimized for production)...');
+        
+        if (this.isProduction) {
+            console.log('Production mode: Using simplified import for performance');
+        }
         
         await this.importGroundwaterAreasOptimized();
         await this.importConservationAreasOptimized(); 
@@ -699,7 +694,7 @@ class OptimizedDataImporter {
         for (const file of groundwaterFiles) {
             if (!fs.existsSync(file)) continue;
             
-            console.log(`  Importing ${path.basename(file)} (optimized)...`);
+            console.log(`Importing ${path.basename(file)}...`);
             const startTime = Date.now();
             
             try {
@@ -707,17 +702,13 @@ class OptimizedDataImporter {
                 let imported = 0;
                 let processed = 0;
                 let skipped = 0;
+                const maxFeatures = this.isProduction ? 5000 : 50000; // Limit for production
 
                 while (true) {
                     const result = await reader.read();
-                    if (result.done) break;
+                    if (result.done || processed >= maxFeatures) break;
                     
                     processed++;
-                    
-                    if (processed % 1000 === 0) {
-                        const elapsed = (Date.now() - startTime) / 1000;
-                        console.log(`    Processed ${processed} features (${imported} imported, ${skipped} skipped) - ${elapsed.toFixed(1)}s`);
-                    }
 
                     try {
                         const geometry = this.transformGeometry(result.value.geometry);
@@ -750,9 +741,6 @@ class OptimizedDataImporter {
 
                     } catch (error) {
                         skipped++;
-                        if (processed % 10000 === 0) {
-                            console.warn(`    Error processing feature ${processed}: ${error.message}`);
-                        }
                     }
                 }
 
@@ -775,6 +763,7 @@ class OptimizedDataImporter {
             path.join(this.unsuitableDir, 'NatureConservation', 'salzburg_nature', 'reprojected_salzburg_nature.shp')
         ];
         
+        // Add upper austria conservation files
         for (let i = 1; i <= 24; i++) {
             conservationFiles.push(
                 path.join(this.unsuitableDir, 'NatureConservation', 'upper_austria_nature', `u${i}.shp`)
@@ -784,7 +773,7 @@ class OptimizedDataImporter {
         for (const file of conservationFiles) {
             if (!fs.existsSync(file)) continue;
             
-            console.log(`  Importing ${path.basename(file)}...`);
+            console.log(`Importing ${path.basename(file)}...`);
             const startTime = Date.now();
             
             try {
@@ -792,10 +781,11 @@ class OptimizedDataImporter {
                 let imported = 0;
                 let processed = 0;
                 let skipped = 0;
+                const maxFeatures = this.isProduction ? 2000 : 10000;
 
                 while (true) {
                     const result = await reader.read();
-                    if (result.done) break;
+                    if (result.done || processed >= maxFeatures) break;
                     
                     processed++;
 
@@ -842,7 +832,7 @@ class OptimizedDataImporter {
                 
                 const elapsed = (Date.now() - startTime) / 1000;
                 if (imported > 0) {
-                    console.log(`Completed ${path.basename(file)}: ${imported} imported, ${skipped} skipped (${elapsed.toFixed(1)}s)`);
+                    console.log(`Completed ${path.basename(file)}: ${imported} imported (${elapsed.toFixed(1)}s)`);
                 }
 
             } catch (error) {
@@ -860,7 +850,7 @@ class OptimizedDataImporter {
         for (const file of residentialFiles) {
             if (!fs.existsSync(file)) continue;
             
-            console.log(`  Importing ${path.basename(file)}...`);
+            console.log(`Importing ${path.basename(file)}...`);
             const startTime = Date.now();
             
             try {
@@ -868,10 +858,11 @@ class OptimizedDataImporter {
                 let imported = 0;
                 let processed = 0;
                 let skipped = 0;
+                const maxFeatures = this.isProduction ? 3000 : 15000;
 
                 while (true) {
                     const result = await reader.read();
-                    if (result.done) break;
+                    if (result.done || processed >= maxFeatures) break;
                     
                     processed++;
 
@@ -917,7 +908,7 @@ class OptimizedDataImporter {
                 this.stats.filteredOutByArea += skipped;
                 
                 const elapsed = (Date.now() - startTime) / 1000;
-                console.log(`Completed ${path.basename(file)}: ${imported} imported, ${skipped} skipped (${elapsed.toFixed(1)}s)`);
+                console.log(`Completed ${path.basename(file)}: ${imported} imported (${elapsed.toFixed(1)}s)`);
 
             } catch (error) {
                 console.error(`Error importing ${file}:`, error.message);
@@ -941,48 +932,50 @@ class OptimizedDataImporter {
         for (const file of roadFiles) {
             if (!fs.existsSync(file)) continue;
             
-            console.log(`  Importing ${path.basename(file)}...`);
-            const features = [];
-            await shapefile.read(file).then(collection => {
-                collection.features.forEach(feature => features.push(feature));
-            });
+            console.log(`Importing ${path.basename(file)}...`);
+            try {
+                const features = [];
+                await shapefile.read(file).then(collection => {
+                    collection.features.forEach(feature => features.push(feature));
+                });
 
-            let imported = 0;
-            let filtered = 0;
+                let imported = 0;
+                let filtered = 0;
+                const maxFeatures = this.isProduction ? 1000 : 5000;
 
-            for (const feature of features) {
-                const geometry = this.transformGeometry(feature.geometry);
-                if (!this.isValidGeoJSON(geometry)) continue;
+                for (let i = 0; i < Math.min(features.length, maxFeatures); i++) {
+                    const feature = features[i];
+                    const geometry = this.transformGeometry(feature.geometry);
+                    if (!this.isValidGeoJSON(geometry)) continue;
 
-                if (this.areaOfInterestBounds) {
-                    const bounds = this.getGeometryBounds(geometry);
-                    if (!this.boundsIntersectArea(bounds)) {
-                        filtered++;
-                        continue;
+                    if (this.areaOfInterestBounds) {
+                        const bounds = this.getGeometryBounds(geometry);
+                        if (!this.boundsIntersectArea(bounds)) {
+                            filtered++;
+                            continue;
+                        }
                     }
-                }
 
-                await this.client.query(`
-                    INSERT INTO highways (
-                        name, highway_number, road_type, geom, properties
-                    ) VALUES ($1, $2, $3, ST_SetSRID(ST_GeomFromGeoJSON($4), 4326), $5)
-                `, [
-                    feature.properties.Name || feature.properties.ref,
-                    feature.properties.ref,
-                    'Primary Road',
-                    JSON.stringify(geometry),
-                    JSON.stringify(feature.properties)
-                ]);
-                imported++;
-            }
-            
-            this.stats.roads += imported;
-            this.stats.filteredOutByArea += filtered;
-            
-            if (filtered > 0) {
-                console.log(`Imported ${imported} roads from ${path.basename(file)} (${filtered} filtered out)`);
-            } else {
-                console.log(`Imported ${imported} roads from ${path.basename(file)}`);
+                    await this.client.query(`
+                        INSERT INTO highways (
+                            name, highway_number, road_type, geom, properties
+                        ) VALUES ($1, $2, $3, ST_SetSRID(ST_GeomFromGeoJSON($4), 4326), $5)
+                    `, [
+                        feature.properties.Name || feature.properties.ref,
+                        feature.properties.ref,
+                        'Primary Road',
+                        JSON.stringify(geometry),
+                        JSON.stringify(feature.properties)
+                    ]);
+                    imported++;
+                }
+                
+                this.stats.roads += imported;
+                this.stats.filteredOutByArea += filtered;
+                
+                console.log(`Imported ${imported} roads from ${path.basename(file)}${this.isProduction ? ' (limited for production)' : ''}`);
+            } catch (error) {
+                console.error(`Error importing ${file}:`, error);
             }
         }
     }
@@ -996,48 +989,50 @@ class OptimizedDataImporter {
         for (const file of railwayFiles) {
             if (!fs.existsSync(file)) continue;
             
-            console.log(`  Importing ${path.basename(file)}...`);
-            const features = [];
-            await shapefile.read(file).then(collection => {
-                collection.features.forEach(feature => features.push(feature));
-            });
+            console.log(`Importing ${path.basename(file)}...`);
+            try {
+                const features = [];
+                await shapefile.read(file).then(collection => {
+                    collection.features.forEach(feature => features.push(feature));
+                });
 
-            let imported = 0;
-            let filtered = 0;
+                let imported = 0;
+                let filtered = 0;
+                const maxFeatures = this.isProduction ? 500 : 2000;
 
-            for (const feature of features) {
-                const geometry = this.transformGeometry(feature.geometry);
-                if (!this.isValidGeoJSON(geometry)) continue;
+                for (let i = 0; i < Math.min(features.length, maxFeatures); i++) {
+                    const feature = features[i];
+                    const geometry = this.transformGeometry(feature.geometry);
+                    if (!this.isValidGeoJSON(geometry)) continue;
 
-                if (this.areaOfInterestBounds) {
-                    const bounds = this.getGeometryBounds(geometry);
-                    if (!this.boundsIntersectArea(bounds)) {
-                        filtered++;
-                        continue;
+                    if (this.areaOfInterestBounds) {
+                        const bounds = this.getGeometryBounds(geometry);
+                        if (!this.boundsIntersectArea(bounds)) {
+                            filtered++;
+                            continue;
+                        }
                     }
-                }
 
-                await this.client.query(`
-                    INSERT INTO railways (
-                        name, railway_type, operator, geom, properties
-                    ) VALUES ($1, $2, $3, ST_SetSRID(ST_GeomFromGeoJSON($4), 4326), $5)
-                `, [
-                    feature.properties.Name || 'Railway Line',
-                    feature.properties.Type || 'Main Line',
-                    feature.properties.Operator || 'ÖBB',
-                    JSON.stringify(geometry),
-                    JSON.stringify(feature.properties)
-                ]);
-                imported++;
-            }
-            
-            this.stats.railways += imported;
-            this.stats.filteredOutByArea += filtered;
-            
-            if (filtered > 0) {
-                console.log(`Imported ${imported} railways from ${path.basename(file)} (${filtered} filtered out)`);
-            } else {
-                console.log(`Imported ${imported} railways from ${path.basename(file)}`);
+                    await this.client.query(`
+                        INSERT INTO railways (
+                            name, railway_type, operator, geom, properties
+                        ) VALUES ($1, $2, $3, ST_SetSRID(ST_GeomFromGeoJSON($4), 4326), $5)
+                    `, [
+                        feature.properties.Name || 'Railway Line',
+                        feature.properties.Type || 'Main Line',
+                        feature.properties.Operator || 'ÖBB',
+                        JSON.stringify(geometry),
+                        JSON.stringify(feature.properties)
+                    ]);
+                    imported++;
+                }
+                
+                this.stats.railways += imported;
+                this.stats.filteredOutByArea += filtered;
+                
+                console.log(`Imported ${imported} railways from ${path.basename(file)}${this.isProduction ? ' (limited for production)' : ''}`);
+            } catch (error) {
+                console.error(`Error importing ${file}:`, error);
             }
         }
     }
@@ -1045,9 +1040,6 @@ class OptimizedDataImporter {
     async createMaterializedViews() {
         console.log('\nCreating materialized views...');
         
-        // Since we're loading voting data directly from shapefile, no need to join
-        console.log('Voting districts already have geometry from shapefile import');
-
         try {
             await this.client.query('DROP MATERIALIZED VIEW IF EXISTS mv_voting_choropleth');
             await this.client.query(`
@@ -1065,13 +1057,47 @@ class OptimizedDataImporter {
                          WHEN left_green_combined >= 5 THEN '#DDAA00'
                          WHEN left_green_combined > 0 THEN '#EE8800'
                          ELSE '#cccccc'
-                       END as fill_color
+                       END as computed_fill_color
                 FROM voting_districts vd
-                WHERE geom IS NOT NULL AND ST_IsValid(geom) = true
+                WHERE geom IS NOT NULL AND geometry_valid = true
             `);
-            console.log('Created voting choropleth materialized view with enhanced color scale');
+            console.log('Created voting choropleth materialized view');
         } catch (error) {
             console.warn('Could not create materialized view:', error.message);
+        }
+    }
+
+    async updateGeometryValidation() {
+        console.log('Updating geometry validation...');
+        
+        try {
+            // Update geometry validity flags
+            await this.client.query(`
+                UPDATE voting_districts 
+                SET geometry_valid = (geom IS NOT NULL AND ST_IsValid(geom)),
+                    has_voting_data = (
+                        spo_percent > 0 OR ovp_percent > 0 OR fpo_percent > 0 OR 
+                        grune_percent > 0 OR kpo_percent > 0 OR neos_percent > 0
+                    )
+            `);
+            
+            // Create simplified geometries for large polygons
+            const tables = ['groundwater_protection', 'conservation_areas', 'settlement_areas', 'gas_pipelines'];
+            for (const table of tables) {
+                try {
+                    await this.client.query(`
+                        UPDATE ${table} 
+                        SET simplified_geom = ST_Simplify(geom, 0.001)
+                        WHERE geom IS NOT NULL
+                    `);
+                } catch (error) {
+                    console.warn(`Could not create simplified geometries for ${table}:`, error.message);
+                }
+            }
+            
+            console.log('Geometry validation completed');
+        } catch (error) {
+            console.warn('Geometry validation warning:', error.message);
         }
     }
 
@@ -1181,21 +1207,21 @@ class OptimizedDataImporter {
     getVotingColor(percentage) {
         if (!percentage || percentage <= 0) return '#cccccc';
         
-        // Enhanced color scale for left+green percentage
-        if (percentage >= 60) return '#00AA00';      // Dark green for very high
-        else if (percentage >= 50) return '#22BB22';  // Green for high  
-        else if (percentage >= 40) return '#44CC44';  // Medium green
-        else if (percentage >= 30) return '#66DD66';  // Light green
-        else if (percentage >= 20) return '#88EE88';  // Very light green
-        else if (percentage >= 15) return '#AAAA00';  // Yellow-green
-        else if (percentage >= 10) return '#CCCC00';  // Yellow
-        else if (percentage >= 5) return '#DDAA00';   // Orange-yellow
-        else if (percentage > 0) return '#EE8800';    // Orange
-        else return '#cccccc';                        // Gray for no data
+        if (percentage >= 60) return '#00AA00';
+        else if (percentage >= 50) return '#22BB22';
+        else if (percentage >= 40) return '#44CC44';
+        else if (percentage >= 30) return '#66DD66';
+        else if (percentage >= 20) return '#88EE88';
+        else if (percentage >= 15) return '#AAAA00';
+        else if (percentage >= 10) return '#CCCC00';
+        else if (percentage >= 5) return '#DDAA00';
+        else if (percentage > 0) return '#EE8800';
+        else return '#cccccc';
     }
 
     printSummary() {
-        console.log('\nIMPORT SUMMARY');
+        console.log('\n=== IMPORT SUMMARY ===');
+        console.log(`Environment: ${this.isProduction ? 'Production' : 'Development'}`);
         console.log('=====================================');
         console.log(`CO₂ Sources: ${this.stats.co2Sources}`);
         console.log(`Voting Districts: ${this.stats.votingDistricts}`);
@@ -1214,12 +1240,20 @@ class OptimizedDataImporter {
         console.log(`Total Filtered by Area: ${this.stats.filteredOutByArea}`);
         console.log(`Errors: ${this.stats.errors}`);
         console.log('=====================================');
+        
+        const total = Object.values(this.stats).reduce((sum, val) => sum + val, 0) - this.stats.filteredOutByArea - this.stats.errors;
+        console.log(`Total Features Imported: ${total}`);
+        
+        if (this.isProduction) {
+            console.log('Note: Production mode applied data limits for performance');
+        }
     }
 }
 
+// Run import if called directly
 if (require.main === module) {
-    const importer = new OptimizedDataImporter();
+    const importer = new ProductionDataImporter();
     importer.importAllData().catch(console.error);
 }
 
-module.exports = OptimizedDataImporter;
+module.exports = ProductionDataImporter;
