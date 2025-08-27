@@ -1,0 +1,41 @@
+services:
+  # PostgreSQL Database Service
+  - type: pserv
+    name: co2-storage-atlas-db
+    env: postgresql
+    plan: free
+    region: oregon
+    ipAllowList: []
+
+  # Web Service - CO₂ Storage Atlas
+  - type: web
+    name: co2-storage-atlas
+    env: node
+    plan: free
+    region: oregon
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    domains:
+      - co2-storage-atlas.onrender.com
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 24h
+      - key: DEFAULT_CENTER_LAT
+        value: "47.8"
+      - key: DEFAULT_CENTER_LNG
+        value: "13.5"
+      - key: DEFAULT_ZOOM
+        value: "8"
+      - key: ADMIN_EMAIL
+        value: admin@co2atlas.local
+      - key: ADMIN_PASSWORD
+        value: co2atlas2024
+
+# Database connection will be automatically provided via DATABASE_URL
